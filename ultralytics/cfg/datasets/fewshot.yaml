@@ -1,0 +1,11 @@
+path: /home/caokhoa/Documents/AEROYEYES/yolofewshot/dataset/converted
+train: images/train
+val: images/val
+names:
+  0: Backpack
+  1: Jacket
+  2: Laptop
+  3: Lifering
+  4: MobilePhone
+  5: Person
+  6: WaterBottle
