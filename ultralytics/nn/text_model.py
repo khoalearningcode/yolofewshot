@@ -5,6 +5,8 @@ import torch.nn as nn
 from ultralytics.utils.torch_utils import smart_inference_mode
 import torch
 from ultralytics.utils import LOGGER
+from pathlib import Path
+import os
 
 class TextModel(nn.Module):
     def __init__(self):
@@ -48,7 +50,35 @@ class MobileCLIP(TextModel):
     def __init__(self, size, device):
         super().__init__()
         config = self.config_size_map[size]
-        self.model = mobileclip.create_model_and_transforms(f'mobileclip_{config}', pretrained=f'mobileclip_{size}.pt', device=device)[0]
+        
+        # Try to find mobileclip weight file in multiple locations
+        weight_name = f'mobileclip_{size}.pt'
+        possible_paths = [
+            # Relative to current working directory
+            weight_name,
+            # In yolofewshot root (from yolofewshot/)
+            Path(__file__).parent.parent.parent / weight_name,
+            # In ultralytics root (from yolofewshot/ultralytics/)
+            Path(__file__).parent.parent.parent / 'yolofewshot' / weight_name,
+            # Check if running from outside yolofewshot
+            Path('yolofewshot') / weight_name,
+        ]
+        
+        pretrained_path = None
+        for path in possible_paths:
+            if Path(path).exists():
+                pretrained_path = str(Path(path).resolve())
+                LOGGER.info(f"Found {weight_name} at {pretrained_path}")
+                break
+        
+        # If not found, don't use pretrained weights
+        if pretrained_path is None:
+            LOGGER.warning(f"Could not find {weight_name}, loading model without pretrained weights")
+            pretrained_path = None
+        else:
+            LOGGER.info(f"Loading {weight_name} from {pretrained_path}")
+        
+        self.model = mobileclip.create_model_and_transforms(f'mobileclip_{config}', pretrained=pretrained_path, device=device)[0]
         self.tokenizer = mobileclip.get_tokenizer(f'mobileclip_{config}')
         self.to(device)
         self.device = device

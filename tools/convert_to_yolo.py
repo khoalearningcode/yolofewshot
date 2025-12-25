@@ -4,6 +4,7 @@ import json
 import cv2
 import math
 import argparse
+import random
 from pathlib import Path
 from collections import defaultdict
 
@@ -42,11 +43,13 @@ def parse_args():
     p.add_argument('--frame_offset', type=int, default=0, help='Add this offset to decoded frame index before matching annotations (use 1 if annotations are 1-based)')
     p.add_argument('--jpeg_quality', type=int, default=90, help='JPEG encode quality')
     p.add_argument('--dataset_yaml', type=str, default=str(Path('ultralytics') / 'cfg' / 'datasets' / 'fewshot.yaml'), help='Path to write dataset yaml')
+    p.add_argument('--seed', type=int, default=42, help='Random seed for reproducible split')
     return p.parse_args()
 
 
 def main():
     args = parse_args()
+    random.seed(args.seed)  # For reproducible split
     in_root = Path(args.input_root)
     ann_path = in_root / args.annotations
     samples_root = in_root / args.samples_dir
@@ -84,9 +87,21 @@ def main():
                 frame_map[fr].append((cid, x1, y1, x2, y2))
         video_to_frames[base] = frame_map
 
-    # Train/val split by deterministic hash on video id
-    def is_val(video_id: str) -> bool:
-        return (abs(hash(video_id)) % 1000) / 1000.0 < args.val_ratio
+    # Train/val split: Chia frame của mỗi video một cách độc lập
+    # val_ratio = 20% frame vào val, 80% frame vào train
+    video_val_frames = dict()  # {video_id: set of frame indices for val}
+    print(f"[SPLIT] Stratified by VIDEO (mỗi video chia {args.val_ratio*100:.0f}% frames vào val):")
+    
+    for video_id, frame_map in video_to_frames.items():
+        frames = sorted(frame_map.keys())
+        random.shuffle(frames)
+        val_count = max(1, int(len(frames) * args.val_ratio))
+        val_frames_for_this_video = set(frames[:val_count])
+        video_val_frames[video_id] = val_frames_for_this_video
+        print(f"  {video_id:20} {len(frames):4} frames -> {val_count:4} to val, {len(frames)-val_count:4} to train")
+    
+    def is_val(video_id: str, frame_idx: int) -> bool:
+        return frame_idx in video_val_frames.get(video_id, set())
 
     # Prepare output dirs
     for split in ['train', 'val']:
@@ -98,7 +113,6 @@ def main():
     total_images, total_labels = 0, 0
 
     for video_id, frame_map in video_to_frames.items():
-        split = 'val' if is_val(video_id) else 'train'
         video_path = samples_root / video_id / 'drone_video.mp4'
         if not video_path.exists():
             print(f"[WARN] Video not found: {video_path}")
@@ -130,6 +144,8 @@ def main():
             if f in wanted_set:
                 ih, iw = frame.shape[:2]
                 boxes = frame_map.get(f, [])
+                # Determine split for this frame
+                split = 'val' if is_val(video_id, f) else 'train'
                 # Write image
                 img_name = f"{video_id}_{f:06d}.jpg"
                 img_out = out_root / 'images' / split / img_name
